@@ -3,3 +3,8 @@
 *.swp
 solver
 mini
+solver_iddfs
+solver_idastar
+search_verify
+test_pdb
+*.exe
