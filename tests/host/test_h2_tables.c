@@ -1,4 +1,5 @@
 #include "cube.h"
+#include "idastar_tables.h"
 #include "search.h"
 
 #include <limits.h>
@@ -120,6 +121,61 @@ static void print_report(const char *name, const table_report_t *report,
     printf("  status: %s\n\n", report->passed ? "PASS" : "FAIL");
 }
 
+static int inspect_transition_tables(void)
+{
+    const uint16_t *const permutation_tables[CUBE_FACES] = {
+        idastar_permutation_turn_r,
+        idastar_permutation_turn_b,
+        idastar_permutation_turn_d,
+    };
+    const uint16_t *const orientation_tables[CUBE_FACES] = {
+        idastar_orientation_turn_r,
+        idastar_orientation_turn_b,
+        idastar_orientation_turn_d,
+    };
+    size_t invalid_entries = 0;
+    size_t mismatches = 0;
+    uint16_t rank;
+
+    for (rank = 0; rank < CUBE_PERMUTATIONS; ++rank) {
+        cube_state_t state;
+        uint8_t face;
+        cube_unrank_permutation(rank, &state);
+        for (face = 0; face < CUBE_FACES; ++face) {
+            cube_state_t next = cube_quarter_turn(state, face);
+            uint16_t expected = cube_rank_permutation(&next);
+            uint16_t actual = permutation_tables[face][rank];
+            if (actual >= CUBE_PERMUTATIONS)
+                ++invalid_entries;
+            if (actual != expected)
+                ++mismatches;
+        }
+    }
+    for (rank = 0; rank < CUBE_ORIENTATIONS; ++rank) {
+        cube_state_t state;
+        uint8_t face;
+        cube_unrank_orientation(rank, &state);
+        for (face = 0; face < CUBE_FACES; ++face) {
+            cube_state_t next = cube_quarter_turn(state, face);
+            uint16_t expected = cube_rank_orientation(&next);
+            uint16_t actual = orientation_tables[face][rank];
+            if (actual >= CUBE_ORIENTATIONS)
+                ++invalid_entries;
+            if (actual != expected)
+                ++mismatches;
+        }
+    }
+
+    puts("Rank-transition tables:");
+    printf("  expected entries: %u\n",
+           CUBE_FACES * (CUBE_PERMUTATIONS + CUBE_ORIENTATIONS));
+    printf("  invalid entries: %lu\n", (unsigned long) invalid_entries);
+    printf("  cube-model mismatches: %lu\n", (unsigned long) mismatches);
+    printf("  status: %s\n\n",
+           invalid_entries == 0 && mismatches == 0 ? "PASS" : "FAIL");
+    return invalid_entries == 0 && mismatches == 0;
+}
+
 int main(void)
 {
     uint8_t sentinel = idastar_pdb_unvisited_value();
@@ -127,6 +183,7 @@ int main(void)
     uint16_t solved_orientation_rank = cube_rank_orientation(&cube_solved);
     table_report_t permutation;
     table_report_t orientation;
+    int transitions_passed;
 
     idastar_build_pdbs();
     permutation = inspect_table(
@@ -140,7 +197,11 @@ int main(void)
 
     print_report("Permutation PDB", &permutation, sentinel);
     print_report("Orientation PDB", &orientation, sentinel);
-    printf("H2: %s\n", permutation.passed && orientation.passed ? "PASS"
-                                                                : "FAIL");
-    return permutation.passed && orientation.passed ? 0 : 1;
+    transitions_passed = inspect_transition_tables();
+    printf("H2: %s\n",
+           permutation.passed && orientation.passed && transitions_passed
+               ? "PASS"
+               : "FAIL");
+    return permutation.passed && orientation.passed && transitions_passed ? 0
+                                                                           : 1;
 }

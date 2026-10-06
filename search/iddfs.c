@@ -1,5 +1,4 @@
 #include "search.h"
-#include "search_internal.h"
 
 #include <string.h>
 
@@ -15,7 +14,6 @@ int iddfs_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
     iddfs_frame_t stack[CUBE_DIAMETER + 1];
     uint8_t path[CUBE_DIAMETER];
     uint8_t limit;
-    double started = search_now_seconds();
     memset(metrics, 0, sizeof *metrics);
 
     for (limit = 0; limit <= CUBE_DIAMETER; ++limit) {
@@ -34,7 +32,6 @@ int iddfs_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
                 if (cube_is_solved(&frame->state)) {
                     metrics->solution_length = depth;
                     memcpy(solution, path, depth);
-                    metrics->host_seconds = search_now_seconds() - started;
                     return 1;
                 }
                 if (depth == limit) {
@@ -64,6 +61,5 @@ int iddfs_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
             }
         }
     }
-    metrics->host_seconds = search_now_seconds() - started;
     return 0;
 }

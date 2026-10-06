@@ -1,95 +1,42 @@
 #include "search.h"
-#include "search_internal.h"
+#include "idastar_tables.h"
 
 #include <limits.h>
 #include <string.h>
 
-static uint8_t permutation_pdb[CUBE_PERMUTATIONS];
-static uint8_t orientation_pdb[CUBE_ORIENTATIONS];
-static int pdbs_ready;
+enum {
+    IDASTAR_PDB_BYTES =
+        sizeof idastar_permutation_pdb + sizeof idastar_orientation_pdb,
+    IDASTAR_TRANSITION_BYTES =
+        sizeof idastar_permutation_turn_r +
+        sizeof idastar_permutation_turn_b +
+        sizeof idastar_permutation_turn_d +
+        sizeof idastar_orientation_turn_r +
+        sizeof idastar_orientation_turn_b + sizeof idastar_orientation_turn_d
+};
 
 typedef struct {
-    cube_state_t state;
-    uint8_t next_move;
+    uint16_t permutation_rank;
+    uint16_t orientation_rank;
+    uint8_t next_face;
+    uint8_t next_turn;
     uint8_t entered;
     uint8_t heuristic;
 } idastar_frame_t;
 
-static void build_permutation_pdb(void)
-{
-    uint16_t queue[CUBE_PERMUTATIONS];
-    uint16_t head = 0, tail = 1;
-    memset(permutation_pdb, UCHAR_MAX, sizeof permutation_pdb);
-    permutation_pdb[0] = 0;
-    queue[0] = 0;
-    while (head < tail) {
-        uint16_t here = queue[head++];
-        cube_state_t state;
-        uint8_t face;
-        cube_unrank_permutation(here, &state);
-        for (face = 0; face < CUBE_FACES; ++face) {
-            cube_state_t next = state;
-            uint8_t turn;
-            for (turn = 0; turn < 3; ++turn) {
-                uint16_t there;
-                next = cube_quarter_turn(next, face);
-                there = cube_rank_permutation(&next);
-                if (permutation_pdb[there] == UCHAR_MAX) {
-                    permutation_pdb[there] =
-                        (uint8_t) (permutation_pdb[here] + 1U);
-                    queue[tail++] = there;
-                }
-            }
-        }
-    }
-}
-
-static void build_orientation_pdb(void)
-{
-    uint16_t queue[CUBE_ORIENTATIONS];
-    uint16_t head = 0, tail = 1;
-    memset(orientation_pdb, UCHAR_MAX, sizeof orientation_pdb);
-    orientation_pdb[0] = 0;
-    queue[0] = 0;
-    while (head < tail) {
-        uint16_t here = queue[head++];
-        cube_state_t state;
-        uint8_t face;
-        cube_unrank_orientation(here, &state);
-        for (face = 0; face < CUBE_FACES; ++face) {
-            cube_state_t next = state;
-            uint8_t turn;
-            for (turn = 0; turn < 3; ++turn) {
-                uint16_t there;
-                next = cube_quarter_turn(next, face);
-                there = cube_rank_orientation(&next);
-                if (orientation_pdb[there] == UCHAR_MAX) {
-                    orientation_pdb[there] =
-                        (uint8_t) (orientation_pdb[here] + 1U);
-                    queue[tail++] = there;
-                }
-            }
-        }
-    }
-}
-
 void idastar_build_pdbs(void)
 {
-    if (!pdbs_ready) {
-        build_permutation_pdb();
-        build_orientation_pdb();
-        pdbs_ready = 1;
-    }
+    /* The host generator has already built the const PDBs. */
 }
 
 size_t idastar_permutation_pdb_entries(void)
 {
-    return sizeof permutation_pdb / sizeof permutation_pdb[0];
+    return CUBE_PERMUTATIONS;
 }
 
 size_t idastar_orientation_pdb_entries(void)
 {
-    return sizeof orientation_pdb / sizeof orientation_pdb[0];
+    return CUBE_ORIENTATIONS;
 }
 
 uint8_t idastar_pdb_unvisited_value(void)
@@ -99,22 +46,37 @@ uint8_t idastar_pdb_unvisited_value(void)
 
 uint8_t idastar_permutation_distance(uint16_t rank)
 {
-    idastar_build_pdbs();
-    return permutation_pdb[rank];
+    return idastar_permutation_pdb[rank];
 }
 
 uint8_t idastar_orientation_distance(uint16_t rank)
 {
-    idastar_build_pdbs();
-    return orientation_pdb[rank];
+    return idastar_orientation_pdb[rank];
 }
 
-static uint8_t heuristic(const cube_state_t *state, search_metrics_t *metrics)
+static uint8_t heuristic(uint16_t permutation_rank, uint16_t orientation_rank,
+                         search_metrics_t *metrics)
 {
-    uint8_t permutation = permutation_pdb[cube_rank_permutation(state)];
-    uint8_t orientation = orientation_pdb[cube_rank_orientation(state)];
+    uint8_t permutation = idastar_permutation_pdb[permutation_rank];
+    uint8_t orientation = idastar_orientation_pdb[orientation_rank];
     metrics->pdb_lookups += 2;
     return permutation > orientation ? permutation : orientation;
+}
+
+static void select_turn_tables(uint8_t face,
+                               const uint16_t **permutation_turn,
+                               const uint16_t **orientation_turn)
+{
+    if (face == 0) {
+        *permutation_turn = idastar_permutation_turn_r;
+        *orientation_turn = idastar_orientation_turn_r;
+    } else if (face == 1) {
+        *permutation_turn = idastar_permutation_turn_b;
+        *orientation_turn = idastar_orientation_turn_b;
+    } else {
+        *permutation_turn = idastar_permutation_turn_d;
+        *orientation_turn = idastar_orientation_turn_d;
+    }
 }
 
 int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
@@ -122,20 +84,24 @@ int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
 {
     idastar_frame_t stack[CUBE_DIAMETER + 1];
     uint8_t path[CUBE_DIAMETER];
-    uint8_t root_heuristic, threshold;
-    double started = search_now_seconds();
+    uint8_t path_face[CUBE_DIAMETER];
+    uint16_t root_permutation = cube_rank_permutation(&start);
+    uint16_t root_orientation = cube_rank_orientation(&start);
+    uint8_t root_heuristic;
+    uint8_t threshold;
+
     memset(metrics, 0, sizeof *metrics);
     metrics->static_table_bytes =
-        (uint32_t) (sizeof permutation_pdb + sizeof orientation_pdb);
-    idastar_build_pdbs();
-    root_heuristic = heuristic(&start, metrics);
+        (uint32_t) (IDASTAR_PDB_BYTES + IDASTAR_TRANSITION_BYTES);
+    root_heuristic = heuristic(root_permutation, root_orientation, metrics);
     threshold = root_heuristic;
 
     while (threshold <= CUBE_DIAMETER) {
         uint8_t depth = 0;
         uint8_t next_threshold = UCHAR_MAX;
         ++metrics->search_iterations;
-        stack[0].state = start;
+        stack[0].permutation_rank = root_permutation;
+        stack[0].orientation_rank = root_orientation;
         stack[0].heuristic = root_heuristic;
         stack[0].entered = 0;
 
@@ -144,7 +110,8 @@ int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
             if (!frame->entered) {
                 uint8_t estimate = (uint8_t) (depth + frame->heuristic);
                 frame->entered = 1;
-                frame->next_move = 0;
+                frame->next_face = 0;
+                frame->next_turn = 0;
                 if (depth > metrics->maximum_stack_depth)
                     metrics->maximum_stack_depth = depth;
                 if (estimate > threshold) {
@@ -155,30 +122,54 @@ int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
                     --depth;
                     continue;
                 }
-                if (cube_is_solved(&frame->state)) {
+                if (frame->permutation_rank == 0 &&
+                    frame->orientation_rank == 0) {
+                    uint8_t i;
                     metrics->solution_length = depth;
-                    memcpy(solution, path, depth);
-                    metrics->host_seconds = search_now_seconds() - started;
+                    for (i = 0; i < depth; ++i)
+                        solution[i] = path[i];
                     return 1;
                 }
                 ++metrics->nodes_expanded;
             }
 
-            while (frame->next_move < CUBE_MOVES && depth > 0 &&
-                   frame->next_move / 3U == path[depth - 1] / 3U)
-                ++frame->next_move;
+            if (depth > 0 && frame->next_face == path_face[depth - 1]) {
+                ++frame->next_face;
+                frame->next_turn = 0;
+            }
 
-            if (frame->next_move == CUBE_MOVES) {
+            if (frame->next_face == CUBE_FACES) {
                 if (depth == 0)
                     break;
                 --depth;
             } else {
-                uint8_t move = frame->next_move++;
+                const uint16_t *permutation_turn;
+                const uint16_t *orientation_turn;
+                uint16_t permutation = frame->permutation_rank;
+                uint16_t orientation = frame->orientation_rank;
+                uint8_t face = frame->next_face;
+                uint8_t turn = frame->next_turn;
+                uint8_t repetitions = (uint8_t) (turn + 1U);
+                uint8_t i;
+
+                ++frame->next_turn;
+                if (frame->next_turn == 3) {
+                    frame->next_turn = 0;
+                    ++frame->next_face;
+                }
+                select_turn_tables(face, &permutation_turn, &orientation_turn);
+                for (i = 0; i < repetitions; ++i) {
+                    permutation = permutation_turn[permutation];
+                    orientation = orientation_turn[orientation];
+                }
+
                 ++metrics->children_generated;
-                path[depth] = move;
-                stack[depth + 1].state = cube_apply_move(frame->state, move);
+                path[depth] = (uint8_t) ((face << 1U) + face + turn);
+                path_face[depth] = face;
+                stack[depth + 1].permutation_rank = permutation;
+                stack[depth + 1].orientation_rank = orientation;
                 stack[depth + 1].heuristic =
-                    heuristic(&stack[depth + 1].state, metrics);
+                    heuristic(permutation, orientation, metrics);
                 stack[depth + 1].entered = 0;
                 ++depth;
             }
@@ -187,6 +178,5 @@ int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
             break;
         threshold = next_threshold;
     }
-    metrics->host_seconds = search_now_seconds() - started;
     return 0;
 }

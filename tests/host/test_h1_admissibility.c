@@ -32,8 +32,8 @@ int main(void)
     uint8_t maximum_exact_distance = 0;
     uint8_t maximum_gap = 0;
     uint32_t rank;
-    double started = search_now_seconds();
-    double elapsed;
+    uint64_t started = search_now_nanoseconds();
+    uint64_t elapsed;
 
     exact_distance = host_build_exact_bfs_distances();
     if (!exact_distance) {
@@ -89,7 +89,7 @@ int main(void)
         }
     }
     free(exact_distance);
-    elapsed = search_now_seconds() - started;
+    elapsed = search_now_nanoseconds() - started;
 
     puts("H1 admissibility test:");
     printf("  states checked: %llu\n",
@@ -109,7 +109,10 @@ int main(void)
     printf("  average gap: %.6f\n",
            states_checked ? (double) gap_sum / states_checked : 0.0);
     printf("  maximum gap: %u\n", maximum_gap);
-    printf("  elapsed time: %.6f seconds\n", elapsed);
+    printf("  elapsed time: %llu.%06llu seconds\n",
+           (unsigned long long) (elapsed / UINT64_C(1000000000)),
+           (unsigned long long) ((elapsed % UINT64_C(1000000000)) /
+                                 UINT64_C(1000)));
     if (violations != 0) {
         uint64_t i;
         uint64_t examples_to_print = violations < MAX_VIOLATION_EXAMPLES

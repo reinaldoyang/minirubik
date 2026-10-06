@@ -31,8 +31,8 @@ int main(void)
     uint64_t total_nodes_expanded = 0;
     uint64_t failures = 0;
     uint32_t rank;
-    double started = search_now_seconds();
-    double elapsed;
+    uint64_t started = search_now_nanoseconds();
+    uint64_t elapsed;
 
     exact_distance = host_build_exact_bfs_distances();
     if (!exact_distance) {
@@ -99,7 +99,7 @@ int main(void)
         }
     }
     free(exact_distance);
-    elapsed = search_now_seconds() - started;
+    elapsed = search_now_nanoseconds() - started;
 
     puts("H3 optimality test:");
     printf("  states checked: %llu\n",
@@ -112,7 +112,10 @@ int main(void)
            (unsigned long long) invalid_solutions);
     printf("  total nodes expanded: %llu\n",
            (unsigned long long) total_nodes_expanded);
-    printf("  elapsed time: %.6f seconds\n", elapsed);
+    printf("  elapsed time: %llu.%06llu seconds\n",
+           (unsigned long long) (elapsed / UINT64_C(1000000000)),
+           (unsigned long long) ((elapsed % UINT64_C(1000000000)) /
+                                 UINT64_C(1000)));
     if (failures != 0) {
         uint64_t i;
         uint64_t examples_to_print = failures < MAX_FAILURE_EXAMPLES

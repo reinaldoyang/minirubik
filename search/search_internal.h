@@ -1,6 +1,8 @@
 #ifndef SEARCH_INTERNAL_H
 #define SEARCH_INTERNAL_H
 
-double search_now_seconds(void);
+#include <stdint.h>
+
+uint64_t search_now_nanoseconds(void);
 
 #endif

@@ -43,19 +43,30 @@ cube_state_t cube_apply_move(cube_state_t state, uint8_t move)
     return state;
 }
 
+static uint8_t smaller_cubies_after(const cube_state_t *state, uint8_t index)
+{
+    uint8_t smaller = 0;
+    uint8_t j;
+    for (j = (uint8_t) (index + 1U); j < CUBE_CUBIES; ++j)
+        if (state->p[j] < state->p[index])
+            ++smaller;
+    return smaller;
+}
+
 uint16_t cube_rank_permutation(const cube_state_t *state)
 {
-    uint16_t rank = 0;
-    uint8_t i;
-    for (i = 0; i < CUBE_CUBIES; ++i) {
-        uint8_t smaller = 0;
-        uint8_t j;
-        for (j = (uint8_t) (i + 1U); j < CUBE_CUBIES; ++j)
-            if (state->p[j] < state->p[i])
-                ++smaller;
-        rank = (uint16_t) (rank * (CUBE_CUBIES - i) + smaller);
-    }
-    return rank;
+    uint16_t s0 = smaller_cubies_after(state, 0);
+    uint16_t s1 = smaller_cubies_after(state, 1);
+    uint16_t s2 = smaller_cubies_after(state, 2);
+    uint16_t s3 = smaller_cubies_after(state, 3);
+    uint16_t s4 = smaller_cubies_after(state, 4);
+    uint16_t s5 = smaller_cubies_after(state, 5);
+
+    return (uint16_t) ((s0 << 9U) + (s0 << 7U) + (s0 << 6U) +
+                       (s0 << 4U) + (s1 << 6U) + (s1 << 5U) +
+                       (s1 << 4U) + (s1 << 3U) + (s2 << 4U) +
+                       (s2 << 3U) + (s3 << 2U) + (s3 << 1U) +
+                       (s4 << 1U) + s5);
 }
 
 uint16_t cube_rank_orientation(const cube_state_t *state)
@@ -63,7 +74,7 @@ uint16_t cube_rank_orientation(const cube_state_t *state)
     uint16_t rank = 0;
     uint8_t i;
     for (i = 0; i < CUBE_CUBIES - 1; ++i)
-        rank = (uint16_t) (rank * 3U + state->o[i]);
+        rank = (uint16_t) ((rank << 1U) + rank + state->o[i]);
     return rank;
 }
 

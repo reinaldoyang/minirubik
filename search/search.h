@@ -13,7 +13,7 @@ typedef struct {
     uint64_t children_generated;
     uint64_t search_iterations;
     uint64_t pdb_lookups;
-    double host_seconds;
+    uint64_t host_nanoseconds;
     uint32_t static_table_bytes;
 } search_metrics_t;
 

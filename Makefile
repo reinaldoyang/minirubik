@@ -4,7 +4,7 @@ FRAMA_C ?= frama-c
 CLANG_FORMAT := $(shell command -v clang-format-20 2>/dev/null || \
 	command -v clang-format 2>/dev/null)
 C_SOURCES := $(wildcard *.c *.h apps/*.c apps/*.h cube/*.c cube/*.h \
-	search/*.c search/*.h tests/*.c tests/host/*.c)
+	search/*.c search/*.h tests/*.c tests/host/*.c tools/*.c)
 SAMPLE_STATE := 21345671111111
 SAMPLE_SOLUTION := B' R' D2 R' B R B' R D2 B R'
 VECTORS := tests/solutions.txt
@@ -13,7 +13,8 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check check-search test-h1 test-h2 test-h3 benchmark-search prove clean indent
+.PHONY: all check check-search test-h1 test-h2 test-h3 benchmark-search \
+	regen-idastar-tables prove clean indent
 
 all: solver mini solver_iddfs solver_idastar
 
@@ -25,49 +26,51 @@ mini: mini.c
 
 SEARCH_INCLUDES := -Iapps -Icube -Isearch
 SEARCH_COMMON := cube/cube.c search/timer.c apps/search_cli.c
+IDASTAR_SOURCES := search/idastar.c search/idastar_tables.c
+IDASTAR_HEADERS := search/idastar_tables.h search/search.h
 
 solver_iddfs: apps/solver_iddfs.c search/iddfs.c $(SEARCH_COMMON) \
 		cube/cube.h search/search.h search/search_internal.h apps/search_cli.h
 	@$(CC) $(CFLAGS) $(SEARCH_INCLUDES) apps/solver_iddfs.c \
 		search/iddfs.c $(SEARCH_COMMON) -o $@
 
-solver_idastar: apps/solver_idastar.c search/idastar.c $(SEARCH_COMMON) \
-		cube/cube.h search/search.h search/search_internal.h apps/search_cli.h
+solver_idastar: apps/solver_idastar.c $(IDASTAR_SOURCES) $(SEARCH_COMMON) \
+		cube/cube.h $(IDASTAR_HEADERS) search/search_internal.h apps/search_cli.h
 	@$(CC) $(CFLAGS) $(SEARCH_INCLUDES) apps/solver_idastar.c \
-		search/idastar.c $(SEARCH_COMMON) -o $@
+		$(IDASTAR_SOURCES) $(SEARCH_COMMON) -o $@
 
 search_verify: tests/verify_solution.c cube/cube.c cube/cube.h
 	@$(CC) $(CFLAGS) -Icube tests/verify_solution.c cube/cube.c -o $@
 
-test_pdb: tests/test_pdb.c search/idastar.c cube/cube.c search/timer.c \
-		cube/cube.h search/search.h search/search_internal.h
-	@$(CC) $(CFLAGS) -Icube -Isearch tests/test_pdb.c search/idastar.c \
+test_pdb: tests/test_pdb.c $(IDASTAR_SOURCES) cube/cube.c search/timer.c \
+		cube/cube.h $(IDASTAR_HEADERS) search/search_internal.h
+	@$(CC) $(CFLAGS) -Icube -Isearch tests/test_pdb.c $(IDASTAR_SOURCES) \
 		cube/cube.c search/timer.c -o $@
 
 test_h1_admissibility: tests/host/test_h1_admissibility.c \
-		tests/host/exact_bfs.c tests/host/exact_bfs.h search/idastar.c \
-		cube/cube.c search/timer.c cube/cube.h search/search.h \
+		tests/host/exact_bfs.c tests/host/exact_bfs.h $(IDASTAR_SOURCES) \
+		cube/cube.c search/timer.c cube/cube.h $(IDASTAR_HEADERS) \
 		search/search_internal.h
 	@$(CC) $(CFLAGS) -Icube -Isearch tests/host/test_h1_admissibility.c \
-		tests/host/exact_bfs.c search/idastar.c cube/cube.c search/timer.c -o $@
+		tests/host/exact_bfs.c $(IDASTAR_SOURCES) cube/cube.c search/timer.c -o $@
 
 test-h1: test_h1_admissibility
 	./test_h1_admissibility
 
-test_h2_tables: tests/host/test_h2_tables.c search/idastar.c cube/cube.c \
-		search/timer.c cube/cube.h search/search.h search/search_internal.h
+test_h2_tables: tests/host/test_h2_tables.c $(IDASTAR_SOURCES) cube/cube.c \
+		search/timer.c cube/cube.h $(IDASTAR_HEADERS) search/search_internal.h
 	@$(CC) $(CFLAGS) -Icube -Isearch tests/host/test_h2_tables.c \
-		search/idastar.c cube/cube.c search/timer.c -o $@
+		$(IDASTAR_SOURCES) cube/cube.c search/timer.c -o $@
 
 test-h2: test_h2_tables
 	./test_h2_tables
 
 test_h3_optimality: tests/host/test_h3_optimality.c tests/host/exact_bfs.c \
-		tests/host/exact_bfs.h search/idastar.c cube/cube.c search/timer.c \
-		cube/cube.h search/search.h search/search_internal.h
+		tests/host/exact_bfs.h $(IDASTAR_SOURCES) cube/cube.c search/timer.c \
+		cube/cube.h $(IDASTAR_HEADERS) search/search_internal.h
 	@$(CC) $(CFLAGS) -Icube -Isearch -Itests/host \
 		tests/host/test_h3_optimality.c tests/host/exact_bfs.c \
-		search/idastar.c cube/cube.c search/timer.c -o $@
+		$(IDASTAR_SOURCES) cube/cube.c search/timer.c -o $@
 
 test-h3: test_h3_optimality
 	./test_h3_optimality
@@ -78,6 +81,12 @@ check-search: solver solver_iddfs solver_idastar search_verify test_pdb
 
 benchmark-search: solver_iddfs solver_idastar
 	@sh benchmarks/run_search_benchmarks.sh
+
+generate_idastar_tables: tools/generate_idastar_tables.c cube/cube.c cube/cube.h
+	@$(CC) $(CFLAGS) -Icube tools/generate_idastar_tables.c cube/cube.c -o $@
+
+regen-idastar-tables: generate_idastar_tables
+	./generate_idastar_tables search/idastar_tables.c
 
 check: solver mini $(VECTORS)
 	./solver --self-test
@@ -152,7 +161,8 @@ endif
 
 clean:
 	$(RM) solver mini solver_iddfs solver_idastar search_verify test_pdb \
-		test_h1_admissibility test_h2_tables test_h3_optimality
+		test_h1_admissibility test_h2_tables test_h3_optimality \
+		generate_idastar_tables
 	$(RM) solver.exe mini.exe solver_iddfs.exe solver_idastar.exe \
 		search_verify.exe test_pdb.exe test_h1_admissibility.exe \
-		test_h2_tables.exe test_h3_optimality.exe
+		test_h2_tables.exe test_h3_optimality.exe generate_idastar_tables.exe
