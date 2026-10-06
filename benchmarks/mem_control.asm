@@ -1,4 +1,4 @@
-.equ WORDS, 65536        # Control: 4096 words = 16 KiB
+.equ WORDS, 1048576        # Control: 4096 words = 16 KiB
 
 .text
 .globl main
