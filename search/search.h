@@ -3,6 +3,7 @@
 
 #include "cube.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
@@ -22,6 +23,9 @@ int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
                   search_metrics_t *metrics);
 
 void idastar_build_pdbs(void);
+size_t idastar_permutation_pdb_entries(void);
+size_t idastar_orientation_pdb_entries(void);
+uint8_t idastar_pdb_unvisited_value(void);
 uint8_t idastar_permutation_distance(uint16_t rank);
 uint8_t idastar_orientation_distance(uint16_t rank);
 

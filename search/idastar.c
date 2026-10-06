@@ -82,6 +82,21 @@ void idastar_build_pdbs(void)
     }
 }
 
+size_t idastar_permutation_pdb_entries(void)
+{
+    return sizeof permutation_pdb / sizeof permutation_pdb[0];
+}
+
+size_t idastar_orientation_pdb_entries(void)
+{
+    return sizeof orientation_pdb / sizeof orientation_pdb[0];
+}
+
+uint8_t idastar_pdb_unvisited_value(void)
+{
+    return UCHAR_MAX;
+}
+
 uint8_t idastar_permutation_distance(uint16_t rank)
 {
     idastar_build_pdbs();

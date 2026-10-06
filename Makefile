@@ -4,7 +4,7 @@ FRAMA_C ?= frama-c
 CLANG_FORMAT := $(shell command -v clang-format-20 2>/dev/null || \
 	command -v clang-format 2>/dev/null)
 C_SOURCES := $(wildcard *.c *.h apps/*.c apps/*.h cube/*.c cube/*.h \
-	search/*.c search/*.h tests/*.c)
+	search/*.c search/*.h tests/*.c tests/host/*.c)
 SAMPLE_STATE := 21345671111111
 SAMPLE_SOLUTION := B' R' D2 R' B R B' R D2 B R'
 VECTORS := tests/solutions.txt
@@ -13,7 +13,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check check-search benchmark-search prove clean indent
+.PHONY: all check check-search test-h1 test-h2 test-h3 benchmark-search prove clean indent
 
 all: solver mini solver_iddfs solver_idastar
 
@@ -43,6 +43,34 @@ test_pdb: tests/test_pdb.c search/idastar.c cube/cube.c search/timer.c \
 		cube/cube.h search/search.h search/search_internal.h
 	@$(CC) $(CFLAGS) -Icube -Isearch tests/test_pdb.c search/idastar.c \
 		cube/cube.c search/timer.c -o $@
+
+test_h1_admissibility: tests/host/test_h1_admissibility.c \
+		tests/host/exact_bfs.c tests/host/exact_bfs.h search/idastar.c \
+		cube/cube.c search/timer.c cube/cube.h search/search.h \
+		search/search_internal.h
+	@$(CC) $(CFLAGS) -Icube -Isearch tests/host/test_h1_admissibility.c \
+		tests/host/exact_bfs.c search/idastar.c cube/cube.c search/timer.c -o $@
+
+test-h1: test_h1_admissibility
+	./test_h1_admissibility
+
+test_h2_tables: tests/host/test_h2_tables.c search/idastar.c cube/cube.c \
+		search/timer.c cube/cube.h search/search.h search/search_internal.h
+	@$(CC) $(CFLAGS) -Icube -Isearch tests/host/test_h2_tables.c \
+		search/idastar.c cube/cube.c search/timer.c -o $@
+
+test-h2: test_h2_tables
+	./test_h2_tables
+
+test_h3_optimality: tests/host/test_h3_optimality.c tests/host/exact_bfs.c \
+		tests/host/exact_bfs.h search/idastar.c cube/cube.c search/timer.c \
+		cube/cube.h search/search.h search/search_internal.h
+	@$(CC) $(CFLAGS) -Icube -Isearch -Itests/host \
+		tests/host/test_h3_optimality.c tests/host/exact_bfs.c \
+		search/idastar.c cube/cube.c search/timer.c -o $@
+
+test-h3: test_h3_optimality
+	./test_h3_optimality
 
 check-search: solver solver_iddfs solver_idastar search_verify test_pdb
 	sh tests/check_search.sh
@@ -123,5 +151,8 @@ endif
 	$(CLANG_FORMAT) -i $(C_SOURCES)
 
 clean:
-	$(RM) solver mini solver_iddfs solver_idastar search_verify test_pdb
-	$(RM) solver.exe mini.exe solver_iddfs.exe solver_idastar.exe search_verify.exe test_pdb.exe
+	$(RM) solver mini solver_iddfs solver_idastar search_verify test_pdb \
+		test_h1_admissibility test_h2_tables test_h3_optimality
+	$(RM) solver.exe mini.exe solver_iddfs.exe solver_idastar.exe \
+		search_verify.exe test_pdb.exe test_h1_admissibility.exe \
+		test_h2_tables.exe test_h3_optimality.exe
