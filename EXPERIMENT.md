@@ -64,3 +64,28 @@ make benchmark-search > measurements.csv
 solver, applies every returned solution, and checks PDB admissibility against
 an exhaustive exact-distance BFS for all 3,674,160 states. The benchmark target
 prints measurements; it does not store or claim precomputed results.
+
+## RV32I reference build
+
+`make rv32i` produces `solver_idastar_rv32i.elf` and its disassembly without
+linking the host CLI, timer, or C library. The freestanding harness uses the
+distance-11 state `21345671111111`, stores its solution and counters in exported
+`target_*` symbols, and exits through Ripes environment call 10. Use
+`make check-rv32i` to reject RV32M multiply/divide instructions and
+`make rv32i-info` to display the ELF header and section sizes.
+
+`make rv32i-asm` builds the self-contained `target/solver_idastar_all.S`, which
+contains the startup, target harness, storage, and search instructions directly.
+The three split assembly files are retained as readable reference copies but
+are not build dependencies. The public search routine accepts permutation and
+orientation ranks, uses an explicit 8-byte-frame stack, and keeps hot counters
+in registers. The default harness passes ranks 720 and 0 for
+`21345671111111`. It links the generated table source only for constant data;
+no compiler-generated C function is present in the assembly ELF. Use
+`make check-rv32i-asm` and `make rv32i-asm-info` for its ISA and size checks.
+
+`make rv32i-asm-cases` builds three separately named ELFs without editing the
+assembly source: `solver_idastar_asm_solved.elf` uses ranks `(0, 0)`,
+`solver_idastar_asm_short.elf` uses `(1104, 426)`, and
+`solver_idastar_asm_distance11.elf` uses `(720, 0)`. Their expected optimal
+solution lengths are 0, 1, and 11 respectively.

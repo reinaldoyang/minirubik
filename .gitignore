@@ -8,3 +8,6 @@ solver_idastar
 search_verify
 test_pdb
 *.exe
+*.elf
+*.map
+*.dump

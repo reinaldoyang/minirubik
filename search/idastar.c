@@ -2,7 +2,6 @@
 #include "idastar_tables.h"
 
 #include <limits.h>
-#include <string.h>
 
 enum {
     IDASTAR_PDB_BYTES =
@@ -90,7 +89,13 @@ int idastar_solve(cube_state_t start, uint8_t solution[CUBE_DIAMETER],
     uint8_t root_heuristic;
     uint8_t threshold;
 
-    memset(metrics, 0, sizeof *metrics);
+    metrics->solution_length = 0;
+    metrics->maximum_stack_depth = 0;
+    metrics->nodes_expanded = 0;
+    metrics->children_generated = 0;
+    metrics->search_iterations = 0;
+    metrics->pdb_lookups = 0;
+    metrics->host_nanoseconds = 0;
     metrics->static_table_bytes =
         (uint32_t) (IDASTAR_PDB_BYTES + IDASTAR_TRANSITION_BYTES);
     root_heuristic = heuristic(root_permutation, root_orientation, metrics);
