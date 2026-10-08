@@ -21,7 +21,8 @@ INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 .PHONY: all check check-search test-h1 test-h2 test-h3 \
 	find-worst-distance11 benchmark-search \
 	regen-idastar-tables rv32i rv32i-info check-rv32i rv32i-asm \
-	rv32i-asm-info check-rv32i-asm rv32i-asm-cases prove clean indent
+	rv32i-asm-info check-rv32i-asm rv32i-asm-cases rv32i-asm-led \
+	prove clean indent
 
 all: solver mini solver_iddfs solver_idastar
 
@@ -37,6 +38,7 @@ IDASTAR_SOURCES := search/idastar.c search/idastar_tables.c
 IDASTAR_HEADERS := search/idastar_tables.h search/search.h
 RV32I_ELF := solver_idastar_rv32i.elf
 RV32I_ASM_ELF := solver_idastar_asm_rv32i.elf
+RV32I_ASM_LED_ELF := solver_idastar_asm_led.elf
 RV32I_ASM_CASE_ELFS := solver_idastar_asm_solved.elf \
 	solver_idastar_asm_short.elf solver_idastar_asm_distance11.elf \
 	solver_idastar_asm_worst11.elf
@@ -48,6 +50,10 @@ RV32I_FLAGS := -O2 -std=c99 -Wall -Wextra -Wpedantic -march=rv32i \
 	-fdata-sections -msmall-data-limit=0
 RV32I_LDFLAGS := -nostdlib -Wl,--gc-sections -Wl,-e,_start \
 	-Wl,-Map,solver_idastar_rv32i.map
+RV32I_LED_BASE ?= 0xf0000000
+RV32I_LED_WIDTH ?= 35
+RV32I_LED_HEIGHT ?= 25
+RV32I_LED_DELAY ?= 250000
 
 solver_iddfs: apps/solver_iddfs.c search/iddfs.c $(SEARCH_COMMON) \
 		cube/cube.h search/search.h search/search_internal.h apps/search_cli.h
@@ -157,6 +163,19 @@ rv32i-asm: $(RV32I_ASM_ELF)
 rv32i-asm-info: rv32i-asm
 	$(RVREADELF) -h $(RV32I_ASM_ELF)
 	$(RVSIZE) -A $(RV32I_ASM_ELF)
+
+$(RV32I_ASM_LED_ELF): $(RV32I_ASM_SOURCES) search/idastar_tables.h
+	$(RVCC) $(RV32I_FLAGS) -DRENDER=1 \
+		-DRENDER_DELAY=$(RV32I_LED_DELAY) -Icube -Isearch \
+		$(RV32I_ASM_SOURCES) -nostdlib -Wl,--gc-sections -Wl,-e,_start \
+		-Wl,--defsym,LED_MATRIX_0_BASE=$(RV32I_LED_BASE) \
+		-Wl,--defsym,LED_MATRIX_0_WIDTH=$(RV32I_LED_WIDTH) \
+		-Wl,--defsym,LED_MATRIX_0_HEIGHT=$(RV32I_LED_HEIGHT) \
+		-Wl,-Map,solver_idastar_asm_led.map -lgcc -o $@
+
+rv32i-asm-led: $(RV32I_ASM_LED_ELF)
+	$(RVOBJDUMP) -d $(RV32I_ASM_LED_ELF) > solver_idastar_asm_led.dump
+	$(RVSIZE) -A $(RV32I_ASM_LED_ELF)
 
 check-rv32i-asm: rv32i-asm
 	@$(RVREADELF) -h $(RV32I_ASM_ELF) | grep -q 'Class:.*ELF32'
@@ -276,6 +295,8 @@ clean:
 		generate_idastar_tables $(RV32I_ELF) solver_idastar_rv32i.map \
 		solver_idastar_rv32i.dump $(RV32I_ASM_ELF) \
 		solver_idastar_asm_rv32i.map solver_idastar_asm_rv32i.dump \
+		$(RV32I_ASM_LED_ELF) solver_idastar_asm_led.map \
+		solver_idastar_asm_led.dump \
 		$(RV32I_ASM_CASE_ELFS) $(RV32I_ASM_CASE_ELFS:.elf=.map) \
 		$(RV32I_ASM_CASE_ELFS:.elf=.dump)
 	$(RM) solver.exe mini.exe solver_iddfs.exe solver_idastar.exe \

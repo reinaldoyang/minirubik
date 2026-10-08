@@ -84,8 +84,35 @@ in registers. The default harness passes ranks 720 and 0 for
 no compiler-generated C function is present in the assembly ELF. Use
 `make check-rv32i-asm` and `make rv32i-asm-info` for its ISA and size checks.
 
-`make rv32i-asm-cases` builds three separately named ELFs without editing the
+`make rv32i-asm-cases` builds four separately named ELFs without editing the
 assembly source: `solver_idastar_asm_solved.elf` uses ranks `(0, 0)`,
 `solver_idastar_asm_short.elf` uses `(1104, 426)`, and
-`solver_idastar_asm_distance11.elf` uses `(720, 0)`. Their expected optimal
-solution lengths are 0, 1, and 11 respectively.
+`solver_idastar_asm_distance11.elf` uses `(720, 0)`. The worst host
+expanded-node distance-11 case is `solver_idastar_asm_worst11.elf`, using ranks
+`(3343, 0)`. Their expected optimal solution lengths are 0, 1, 11, and 11.
+
+## Ripes LED matrix build
+
+`make rv32i-asm-led` builds `solver_idastar_asm_led.elf` with `RENDER=1`.
+Before loading it, instantiate one LED Matrix in Ripes and set Width to 35 and
+Height to 25. The default build assigns the exported symbols
+`LED_MATRIX_0_BASE`, `LED_MATRIX_0_WIDTH`, and `LED_MATRIX_0_HEIGHT` the values
+`0xf0000000`, 35, and 25. If the peripheral's Export panel shows another base,
+pass it explicitly, for example:
+
+```sh
+make rv32i-asm-led RV32I_LED_BASE=0xe0000000
+```
+
+Before IDA* starts, the renderer clears the full matrix and draws the scrambled
+input as a six-face unfolded net using
+row-major address `LED_MATRIX_0_BASE + 4 * (y * LED_MATRIX_0_WIDTH + x)`, and
+after IDA* returns it replays `target_solution` in order. It redraws after every
+returned move and leaves the solved cube displayed. Each facelet is a 4-by-3 LED block; three separator
+columns and two separator rows give a 35-by-20 net, leaving rows 20 through 24
+black.
+
+All ordinary `rv32i-asm`, `rv32i-asm-cases`, and instruction-measurement builds
+leave `RENDER=0`. Their assembled program contains neither renderer code nor
+references to LED peripheral symbols. The GUI build must therefore not be used
+for instruction-count comparisons.

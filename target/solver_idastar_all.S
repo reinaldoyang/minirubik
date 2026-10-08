@@ -15,6 +15,17 @@
 #define TARGET_EXPECTED_LENGTH 11
 #endif
 
+#ifndef RENDER
+#define RENDER 0
+#endif
+
+#ifndef RENDER_DELAY
+#define RENDER_DELAY 500000
+#endif
+
+    .equ RENDER_ENABLED, RENDER
+    .equ RENDER_DELAY_COUNT, RENDER_DELAY
+
 /* ===== Startup ===== */
     .section .text.start,"ax",@progbits
     .option norvc
@@ -52,6 +63,14 @@ target_main:
     sw s2, 0(sp)
     li s0, TARGET_PERMUTATION_RANK
     li s1, TARGET_ORIENTATION_RANK
+
+    /* Show the scrambled input before the solver starts. */
+    .if RENDER_ENABLED
+    mv a0, s0
+    mv a1, s1
+    call render_initial_state
+    .endif
+
     mv a0, s0
     mv a1, s1
     la a2, target_solution
@@ -67,6 +86,15 @@ target_main:
     lbu a3, 0(t0)
     li t1, TARGET_EXPECTED_LENGTH
     bne a3, t1, .Lvalidation_failed
+
+    /* The GUI build animates only the returned solution, never search nodes. */
+    .if RENDER_ENABLED
+    la a0, target_solution
+    mv a1, a3
+    call animate_solution
+    la t0, target_metrics
+    lbu a3, 0(t0)
+    .endif
 
     /* Replay solution[] from the preserved input ranks. */
     mv a0, s0
@@ -141,6 +169,20 @@ target_validation_passed:
 target_done:
     .space 4
     .size target_done, 4
+
+    .if RENDER_ENABLED
+    .balign 4
+target_render_position:
+    .space 8
+target_render_orientation:
+    .space 8
+target_render_available:
+    .space 7
+target_render_next_position:
+    .space 7
+target_render_next_orientation:
+    .space 7
+    .endif
 
     .section .rodata.target_messages,"a",@progbits
 .Lvalidation_pass_message:
@@ -222,6 +264,442 @@ validate_solution_ranks_asm:
     ret
 
     .size validate_solution_ranks_asm, .-validate_solution_ranks_asm
+
+/* ===== Optional Ripes LED cube renderer ===== */
+    .if RENDER_ENABLED
+    .section .text.led_renderer,"ax",@progbits
+    .option norvc
+
+/*
+ * Reconstruct and draw the initial state before IDA* starts.
+ */
+render_initial_state:
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    call unrank_render_state
+    call clear_led_matrix
+    call render_cube
+    call render_delay
+    lw ra, 12(sp)
+    addi sp, sp, 16
+    ret
+
+/*
+ * Replay and redraw every move returned by IDA*.
+ * a0: solution byte array
+ * a1: solution length
+ */
+animate_solution:
+    addi sp, sp, -32
+    sw ra, 28(sp)
+    sw s0, 24(sp)
+    sw s1, 20(sp)
+    sw s2, 16(sp)
+    mv s0, a0
+    mv s1, a1
+    li s2, 0
+
+.Lanimate_next_move:
+    bgeu s2, s1, .Lanimate_done
+    add t0, s0, s2
+    lbu a0, 0(t0)
+    call apply_render_move
+    call render_cube
+    call render_delay
+    addi s2, s2, 1
+    j .Lanimate_next_move
+
+.Lanimate_done:
+    lw s2, 16(sp)
+    lw s1, 20(sp)
+    lw s0, 24(sp)
+    lw ra, 28(sp)
+    addi sp, sp, 32
+    ret
+
+/* Convert the two search ranks into p[8] and o[8] for drawing. */
+unrank_render_state:
+    addi sp, sp, -32
+    sw ra, 28(sp)
+    sw s0, 24(sp)
+    sw s1, 20(sp)
+    sw s2, 16(sp)
+    sw s3, 12(sp)
+    sw s4, 8(sp)
+    sw s5, 4(sp)
+    sw s6, 0(sp)
+    mv s0, a0                    /* permutation rank */
+    mv s6, a1                    /* orientation rank */
+    la s3, target_render_position
+    la s4, target_render_available
+
+    /* available[] = {0, 1, 2, 3, 4, 5, 6}. */
+    li t0, 0
+.Lrender_init_available:
+    add t1, s4, t0
+    sb t0, 0(t1)
+    addi t0, t0, 1
+    li t1, 7
+    bltu t0, t1, .Lrender_init_available
+
+    la s1, .Lrender_factors
+    li s2, 0                     /* destination position */
+    li s5, 7                     /* available entries */
+
+.Lrender_unrank_permutation:
+    lhu t0, 0(s1)                /* factorial divisor */
+    li t1, 0                     /* quotient */
+.Lrender_permutation_divide:
+    bltu s0, t0, .Lrender_permutation_digit
+    sub s0, s0, t0
+    addi t1, t1, 1
+    j .Lrender_permutation_divide
+
+.Lrender_permutation_digit:
+    add t2, s4, t1
+    lbu t3, 0(t2)
+    add t4, s3, s2
+    sb t3, 0(t4)
+
+    /* Delete available[quotient] by shifting later entries left. */
+    mv t2, t1
+.Lrender_shift_available:
+    addi t3, t2, 1
+    bgeu t3, s5, .Lrender_shift_done
+    add t4, s4, t3
+    lbu t5, 0(t4)
+    add t4, s4, t2
+    sb t5, 0(t4)
+    mv t2, t3
+    j .Lrender_shift_available
+
+.Lrender_shift_done:
+    addi s2, s2, 1
+    addi s1, s1, 2
+    addi s5, s5, -1
+    li t0, 7
+    bltu s2, t0, .Lrender_unrank_permutation
+    li t0, 7                     /* fixed UFL corner */
+    sb t0, 7(s3)
+
+    /* Decode six base-3 digits, then derive the constrained seventh. */
+    la s3, target_render_orientation
+    li s2, 5
+    li s5, 0                     /* orientation sum */
+.Lrender_unrank_orientation:
+    mv t0, s6                    /* remainder */
+    li t1, 0                     /* quotient */
+    li t2, 3
+.Lrender_orientation_divide:
+    bltu t0, t2, .Lrender_orientation_digit
+    addi t0, t0, -3
+    addi t1, t1, 1
+    j .Lrender_orientation_divide
+
+.Lrender_orientation_digit:
+    add t3, s3, s2
+    sb t0, 0(t3)
+    add s5, s5, t0
+    mv s6, t1
+    beqz s2, .Lrender_orientation_constraint
+    addi s2, s2, -1
+    j .Lrender_unrank_orientation
+
+.Lrender_orientation_constraint:
+    li t0, 3
+.Lrender_sum_modulo:
+    bltu s5, t0, .Lrender_sum_ready
+    addi s5, s5, -3
+    j .Lrender_sum_modulo
+.Lrender_sum_ready:
+    beqz s5, .Lrender_last_orientation_zero
+    sub t0, t0, s5
+    j .Lrender_store_last_orientation
+.Lrender_last_orientation_zero:
+    li t0, 0
+.Lrender_store_last_orientation:
+    sb t0, 6(s3)
+    sb zero, 7(s3)               /* fixed UFL corner */
+
+    lw s6, 0(sp)
+    lw s5, 4(sp)
+    lw s4, 8(sp)
+    lw s3, 12(sp)
+    lw s2, 16(sp)
+    lw s1, 20(sp)
+    lw s0, 24(sp)
+    lw ra, 28(sp)
+    addi sp, sp, 32
+    ret
+
+/* Apply one encoded R/R2/R'/B/B2/B'/D/D2/D' move to p[] and o[]. */
+apply_render_move:
+    addi sp, sp, -32
+    sw ra, 28(sp)
+    sw s0, 24(sp)
+    sw s1, 20(sp)
+    sw s2, 16(sp)
+    sw s3, 12(sp)
+    sw s4, 8(sp)
+    sw s5, 4(sp)
+    sw s6, 0(sp)
+
+    li t0, 3
+    bltu a0, t0, .Lrender_move_r
+    li t0, 6
+    bltu a0, t0, .Lrender_move_b
+    li t0, 9
+    bgeu a0, t0, .Lrender_move_done
+    addi s2, a0, -5             /* D repetitions: move - 6 + 1 */
+    li s1, 14
+    j .Lrender_move_tables
+.Lrender_move_b:
+    addi s2, a0, -2             /* B repetitions: move - 3 + 1 */
+    li s1, 7
+    j .Lrender_move_tables
+.Lrender_move_r:
+    addi s2, a0, 1
+    li s1, 0
+
+.Lrender_move_tables:
+    la s3, .Lrender_move_sources
+    add s3, s3, s1
+    la s4, .Lrender_move_twists
+    add s4, s4, s1
+    la s5, target_render_position
+    la s6, target_render_orientation
+
+.Lrender_move_quarter_turn:
+    li t0, 0
+.Lrender_move_destination:
+    add t6, s3, t0
+    lbu t1, 0(t6)                /* source position */
+    add t6, s5, t1
+    lbu t2, 0(t6)
+    la t3, target_render_next_position
+    add t3, t3, t0
+    sb t2, 0(t3)
+
+    add t6, s6, t1
+    lbu t2, 0(t6)
+    add t6, s4, t0
+    lbu t3, 0(t6)
+    add t2, t2, t3
+    li t3, 3
+    bltu t2, t3, .Lrender_move_orientation_ready
+    addi t2, t2, -3
+.Lrender_move_orientation_ready:
+    la t3, target_render_next_orientation
+    add t3, t3, t0
+    sb t2, 0(t3)
+
+    addi t0, t0, 1
+    li t1, 7
+    bltu t0, t1, .Lrender_move_destination
+
+    li t0, 0
+    la t1, target_render_next_position
+    la t2, target_render_next_orientation
+.Lrender_move_copy:
+    add t3, t1, t0
+    lbu t4, 0(t3)
+    add t3, s5, t0
+    sb t4, 0(t3)
+    add t3, t2, t0
+    lbu t4, 0(t3)
+    add t3, s6, t0
+    sb t4, 0(t3)
+    addi t0, t0, 1
+    li t3, 7
+    bltu t0, t3, .Lrender_move_copy
+
+    addi s2, s2, -1
+    bnez s2, .Lrender_move_quarter_turn
+
+.Lrender_move_done:
+    lw s6, 0(sp)
+    lw s5, 4(sp)
+    lw s4, 8(sp)
+    lw s3, 12(sp)
+    lw s2, 16(sp)
+    lw s1, 20(sp)
+    lw s0, 24(sp)
+    lw ra, 28(sp)
+    addi sp, sp, 32
+    ret
+
+/* Clear all WIDTH * HEIGHT LEDs in row-major order. */
+clear_led_matrix:
+    lui t0, %hi(LED_MATRIX_0_BASE)
+    addi t0, t0, %lo(LED_MATRIX_0_BASE)
+    lui t1, %hi(LED_MATRIX_0_WIDTH)
+    addi t1, t1, %lo(LED_MATRIX_0_WIDTH)
+    lui t2, %hi(LED_MATRIX_0_HEIGHT)
+    addi t2, t2, %lo(LED_MATRIX_0_HEIGHT)
+.Lrender_clear_row:
+    mv t3, t1
+.Lrender_clear_column:
+    sw zero, 0(t0)
+    addi t0, t0, 4
+    addi t3, t3, -1
+    bnez t3, .Lrender_clear_column
+    addi t2, t2, -1
+    bnez t2, .Lrender_clear_row
+    ret
+
+/* Draw 24 facelets, each as a 4-by-3 block, into the 35-by-25 matrix. */
+render_cube:
+    addi sp, sp, -48
+    sw ra, 44(sp)
+    sw s0, 40(sp)
+    sw s1, 36(sp)
+    sw s2, 32(sp)
+    sw s3, 28(sp)
+    sw s4, 24(sp)
+    sw s5, 20(sp)
+    sw s6, 16(sp)
+    sw s7, 12(sp)
+    sw s8, 8(sp)
+
+    lui s0, %hi(LED_MATRIX_0_BASE)
+    addi s0, s0, %lo(LED_MATRIX_0_BASE)
+    lui s1, %hi(LED_MATRIX_0_WIDTH)
+    addi s1, s1, %lo(LED_MATRIX_0_WIDTH)
+    slli s2, s1, 2              /* row stride in bytes */
+    la s3, .Lrender_facelets
+    li s4, 24
+    la s5, target_render_position
+    la s6, target_render_orientation
+    la s7, .Lrender_cubie_colors
+    la s8, .Lrender_rgb
+
+.Lrender_facelet:
+    lbu t0, 0(s3)               /* corner position */
+    lbu t1, 1(s3)               /* face index within corner */
+    lbu t2, 2(s3)               /* matrix x */
+    lbu t3, 3(s3)               /* matrix y */
+
+    add t4, s5, t0
+    lbu t4, 0(t4)               /* cubie identity */
+    add t5, s6, t0
+    lbu t5, 0(t5)               /* cubie orientation */
+    add t1, t1, t5
+    li t5, 3
+    bltu t1, t5, .Lrender_color_index_ready
+    addi t1, t1, -3
+.Lrender_color_index_ready:
+    slli t5, t4, 1
+    add t5, t5, t4              /* cubie * 3 */
+    add t5, t5, t1
+    add t5, s7, t5
+    lbu t5, 0(t5)               /* U/R/F/D/L/B color index */
+    slli t5, t5, 2
+    add t5, s8, t5
+    lw a0, 0(t5)                /* 24-bit RGB */
+
+    slli t2, t2, 2
+    add t0, s0, t2
+.Lrender_add_rows:
+    beqz t3, .Lrender_block
+    add t0, t0, s2
+    addi t3, t3, -1
+    j .Lrender_add_rows
+
+.Lrender_block:
+    li t1, 3
+.Lrender_block_row:
+    mv t2, t0
+    li t3, 4
+.Lrender_block_pixel:
+    sw a0, 0(t2)
+    addi t2, t2, 4
+    addi t3, t3, -1
+    bnez t3, .Lrender_block_pixel
+    add t0, t0, s2
+    addi t1, t1, -1
+    bnez t1, .Lrender_block_row
+
+    addi s3, s3, 4
+    addi s4, s4, -1
+    bnez s4, .Lrender_facelet
+
+    lw s8, 8(sp)
+    lw s7, 12(sp)
+    lw s6, 16(sp)
+    lw s5, 20(sp)
+    lw s4, 24(sp)
+    lw s3, 28(sp)
+    lw s2, 32(sp)
+    lw s1, 36(sp)
+    lw s0, 40(sp)
+    lw ra, 44(sp)
+    addi sp, sp, 48
+    ret
+
+render_delay:
+    li t0, RENDER_DELAY_COUNT
+.Lrender_delay_loop:
+    addi t0, t0, -1
+    bnez t0, .Lrender_delay_loop
+    ret
+
+    .section .rodata.led_renderer,"a",@progbits
+    .balign 2
+.Lrender_factors:
+    .half 720, 120, 24, 6, 2, 1, 1
+
+/* Each destination takes its cubie and twist from these seven-entry rows. */
+.Lrender_move_sources:
+    .byte 1, 4, 2, 0, 3, 5, 6
+    .byte 0, 1, 2, 4, 5, 6, 3
+    .byte 0, 2, 5, 3, 1, 4, 6
+.Lrender_move_twists:
+    .byte 1, 2, 0, 2, 1, 0, 0
+    .byte 0, 0, 0, 1, 2, 1, 2
+    .byte 0, 0, 0, 0, 0, 0, 0
+
+/* Cubie colors in cyclic corner order; 0..5 mean U, R, F, D, L, B. */
+.Lrender_cubie_colors:
+    .byte 0, 1, 2               /* URF */
+    .byte 3, 2, 1               /* DFR */
+    .byte 3, 4, 2               /* DLF */
+    .byte 0, 5, 1               /* UBR */
+    .byte 3, 1, 5               /* DRB */
+    .byte 3, 5, 4               /* DBL */
+    .byte 0, 4, 5               /* ULB */
+    .byte 0, 2, 4               /* fixed UFL */
+
+    .balign 4
+.Lrender_rgb:
+    .word 0xffffff              /* U: white */
+    .word 0xff0000              /* R: red */
+    .word 0x00ff00              /* F: green */
+    .word 0xffff00              /* D: yellow */
+    .word 0xff8000              /* L: orange */
+    .word 0x0000ff              /* B: blue */
+
+/*
+ * Entries are {corner position, corner-face index, x, y}.  Face slots are
+ *        U
+ *      L F R B
+ *        D
+ * Each facelet is 4 by 3 LEDs.  Slot separators produce 35 by 20 pixels;
+ * rows 20..24 remain black in the required 35-by-25 matrix.
+ */
+.Lrender_facelets:
+    .byte 6, 0,  9,  0,   3, 0, 13,  0   /* U */
+    .byte 7, 0,  9,  3,   0, 0, 13,  3
+    .byte 6, 1,  0,  7,   7, 2,  4,  7   /* L */
+    .byte 5, 2,  0, 10,   2, 1,  4, 10
+    .byte 7, 1,  9,  7,   0, 2, 13,  7   /* F */
+    .byte 2, 2,  9, 10,   1, 1, 13, 10
+    .byte 0, 1, 18,  7,   3, 2, 22,  7   /* R */
+    .byte 1, 2, 18, 10,   4, 1, 22, 10
+    .byte 3, 1, 27,  7,   6, 2, 31,  7   /* B */
+    .byte 4, 2, 27, 10,   5, 1, 31, 10
+    .byte 2, 0,  9, 14,   1, 0, 13, 14   /* D */
+    .byte 5, 0,  9, 17,   4, 0, 13, 17
+    .endif
 
 /* ===== IDA* search ===== */
     .section .text.idastar_asm,"ax",@progbits
