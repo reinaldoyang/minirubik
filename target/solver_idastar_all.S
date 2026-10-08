@@ -1,18 +1,33 @@
 /*
  * Self-contained hand-written RV32I IDA* solver.
- * Default input: 21345671111111 (permutation rank 720, orientation rank 0).
+ * The 14-character input is inlined at assembly time.
+ *
+ * Program flow:
+ *   _start
+ *     -> target_main
+ *        -> parse_and_rank_target_state
+ *        -> render_initial_state             (RENDER=1 only)
+ *        -> idastar_solve_ranks_asm          (core solver)
+ *        -> animate_solution                 (RENDER=1 only)
+ *        -> validate_solution_ranks_asm
+ *
+ * File organization:
+ *   1. Build-time configuration
+ *   2. Startup
+ *   3. Program controller and storage
+ *   4. Input parsing and ranking
+ *   5. Solution validation
+ *   6. Optional LED renderer
+ *   7. IDA* search
  */
 
-#ifndef TARGET_PERMUTATION_RANK
-#define TARGET_PERMUTATION_RANK 720
-#endif
-
-#ifndef TARGET_ORIENTATION_RANK
-#define TARGET_ORIENTATION_RANK 0
+/* ===== 1. Build-time configuration ===== */
+#ifndef TARGET_STATE
+#define TARGET_STATE "21345671111111"
 #endif
 
 #ifndef TARGET_EXPECTED_LENGTH
-#define TARGET_EXPECTED_LENGTH 11
+#define TARGET_EXPECTED_LENGTH -1
 #endif
 
 #ifndef RENDER
@@ -20,13 +35,13 @@
 #endif
 
 #ifndef RENDER_DELAY
-#define RENDER_DELAY 500000
+#define RENDER_DELAY 50000
 #endif
 
     .equ RENDER_ENABLED, RENDER
     .equ RENDER_DELAY_COUNT, RENDER_DELAY
 
-/* ===== Startup ===== */
+/* ===== 2. Startup ===== */
     .section .text.start,"ax",@progbits
     .option norvc
     .globl _start
@@ -49,7 +64,7 @@ _start:
 
     .size _start, .-_start
 
-/* ===== Target harness and result storage ===== */
+/* ===== 3. Program controller and result storage ===== */
     .section .text.target_main,"ax",@progbits
     .option norvc
     .globl target_main
@@ -61,16 +76,25 @@ target_main:
     sw s0, 8(sp)
     sw s1, 4(sp)
     sw s2, 0(sp)
-    li s0, TARGET_PERMUTATION_RANK
-    li s1, TARGET_ORIENTATION_RANK
 
-    /* Show the scrambled input before the solver starts. */
+    /* Phase A: validate and rank the inlined cube state. */
+    la a0, target_state
+    call parse_and_rank_target_state
+    beqz a0, .Linput_failed
+    mv s0, a1                    /* parsed permutation rank */
+    mv s1, a2                    /* parsed orientation rank */
+    li t1, 1
+    la t0, target_input_valid
+    sw t1, 0(t0)
+
+    /* Phase B: show the scrambled input before the solver starts. */
     .if RENDER_ENABLED
     mv a0, s0
     mv a1, s1
     call render_initial_state
     .endif
 
+    /* Phase C: solve the ranked state. */
     mv a0, s0
     mv a1, s1
     la a2, target_solution
@@ -80,14 +104,16 @@ target_main:
     la t0, target_search_succeeded
     sw s2, 0(t0)
 
-    /* A valid result must exist and have this case's exact BFS length. */
+    /* Phase D: require success and, when configured, the expected length. */
     beqz s2, .Lvalidation_failed
     la t0, target_metrics
     lbu a3, 0(t0)
+#if TARGET_EXPECTED_LENGTH >= 0
     li t1, TARGET_EXPECTED_LENGTH
     bne a3, t1, .Lvalidation_failed
+#endif
 
-    /* The GUI build animates only the returned solution, never search nodes. */
+    /* Phase E: animate only the returned solution, never search nodes. */
     .if RENDER_ENABLED
     la a0, target_solution
     mv a1, a3
@@ -96,7 +122,7 @@ target_main:
     lbu a3, 0(t0)
     .endif
 
-    /* Replay solution[] from the preserved input ranks. */
+    /* Phase F: replay solution[] from the preserved input ranks. */
     mv a0, s0
     mv a1, s1
     la a2, target_solution
@@ -107,6 +133,17 @@ target_main:
     la a0, .Lvalidation_pass_message
     j .Lvalidation_result
 
+.Linput_failed:
+    la t0, target_input_valid
+    sw zero, 0(t0)
+    la t0, target_search_succeeded
+    sw zero, 0(t0)
+    la t0, target_validation_passed
+    sw zero, 0(t0)
+    li s2, 0
+    la a0, .Linput_fail_message
+    j .Ltarget_message
+
 .Lvalidation_failed:
     li s2, 0
     la a0, .Lvalidation_fail_message
@@ -114,6 +151,7 @@ target_main:
 .Lvalidation_result:
     la t0, target_validation_passed
     sw s2, 0(t0)
+.Ltarget_message:
     li a7, 4
     ecall
 
@@ -130,6 +168,7 @@ target_main:
 
     .size target_main, .-target_main
 
+    /* Runtime storage shared by the controller, solver, and renderer. */
     .section .bss.target,"aw",@nobits
     .balign 16
     .globl target_stack
@@ -152,6 +191,12 @@ target_solution:
     .size target_solution, 11
 
     .balign 4
+    .globl target_input_valid
+    .type target_input_valid, @object
+target_input_valid:
+    .space 4
+    .size target_input_valid, 4
+
     .globl target_search_succeeded
     .type target_search_succeeded, @object
 target_search_succeeded:
@@ -184,13 +229,149 @@ target_render_next_orientation:
     .space 7
     .endif
 
+    /* Inlined input and console messages. */
     .section .rodata.target_messages,"a",@progbits
+    .globl target_state
+    .type target_state, @object
+target_state:
+    .asciz TARGET_STATE
+    .size target_state, .-target_state
+
+.Linput_fail_message:
+    .asciz "input: FAIL\n"
 .Lvalidation_pass_message:
     .asciz "validation: PASS\n"
 .Lvalidation_fail_message:
     .asciz "validation: FAIL\n"
 
-/* ===== In-target solution validation ===== */
+/* ===== 4. Input parsing and ranking ===== */
+    .section .text.parse_target,"ax",@progbits
+    .option norvc
+    .type parse_and_rank_target_state, @function
+
+/*
+ * a0: pointer to a NUL-terminated 14-character cube state
+ * returns a0 = 1, a1 = permutation rank, a2 = orientation rank on success
+ * returns a0 = 0 on invalid length, digit, duplicate, or orientation sum
+ *
+ * The first seven parsed permutation values are kept in this function's
+ * fixed 16-byte stack frame.  No heap, multiplication, division, or remainder
+ * operation is used.
+ */
+parse_and_rank_target_state:
+    addi sp, sp, -16
+    mv t0, a0                    /* input cursor */
+    li t1, 0                     /* character index */
+    li t2, 0                     /* seen-cubie bit mask */
+
+.Lparse_permutation:
+    lbu t3, 0(t0)
+    li t4, '1'
+    bltu t3, t4, .Lparse_failed
+    li t5, '8'
+    bgeu t3, t5, .Lparse_failed
+    addi t3, t3, -'1'           /* internal cubie value 0..6 */
+    li t4, 1
+    sll t4, t4, t3
+    and t5, t2, t4
+    bnez t5, .Lparse_failed
+    or t2, t2, t4
+    add t5, sp, t1
+    sb t3, 0(t5)
+    addi t0, t0, 1
+    addi t1, t1, 1
+    li t4, 7
+    bltu t1, t4, .Lparse_permutation
+    li t3, 0x7f
+    bne t2, t3, .Lparse_failed
+
+    li t1, 0                     /* orientation index */
+    li t2, 0                     /* orientation sum */
+    li a2, 0                     /* orientation rank */
+.Lparse_orientation:
+    lbu t3, 0(t0)
+    li t4, '1'
+    bltu t3, t4, .Lparse_failed
+    li t5, '4'
+    bgeu t3, t5, .Lparse_failed
+    addi t3, t3, -'1'           /* internal orientation 0..2 */
+    add t2, t2, t3
+    li t4, 6
+    bgeu t1, t4, .Lparse_orientation_ranked
+    slli t4, a2, 1
+    add a2, t4, a2              /* rank *= 3 */
+    add a2, a2, t3
+.Lparse_orientation_ranked:
+    addi t0, t0, 1
+    addi t1, t1, 1
+    li t4, 7
+    bltu t1, t4, .Lparse_orientation
+
+    /* Requiring NUL here enforces exactly 14 input characters. */
+    lbu t3, 0(t0)
+    bnez t3, .Lparse_failed
+
+    /* Check orientation_sum modulo 3 by bounded subtraction. */
+    li t3, 3
+.Lparse_orientation_sum:
+    bltu t2, t3, .Lparse_orientation_sum_ready
+    addi t2, t2, -3
+    j .Lparse_orientation_sum
+.Lparse_orientation_sum_ready:
+    bnez t2, .Lparse_failed
+
+    /* Rank the permutation from its Lehmer digits using small radices. */
+    li a1, 0
+    li t0, 0                     /* permutation index */
+.Lrank_permutation_digit:
+    add t1, sp, t0
+    lbu t1, 0(t1)               /* current cubie */
+    li t2, 0                     /* smaller cubies after this position */
+    addi t3, t0, 1
+.Lrank_count_smaller:
+    li t4, 7
+    bgeu t3, t4, .Lrank_digit_ready
+    add t4, sp, t3
+    lbu t4, 0(t4)
+    bgeu t4, t1, .Lrank_not_smaller
+    addi t2, t2, 1
+.Lrank_not_smaller:
+    addi t3, t3, 1
+    j .Lrank_count_smaller
+
+.Lrank_digit_ready:
+    beqz t0, .Lrank_first_digit
+    li t3, 7
+    sub t3, t3, t0              /* radix: 6, 5, 4, 3, or 2 */
+    mv t4, a1
+    li a1, 0
+.Lrank_small_multiply:
+    add a1, a1, t4
+    addi t3, t3, -1
+    bnez t3, .Lrank_small_multiply
+    add a1, a1, t2
+    j .Lrank_next_digit
+.Lrank_first_digit:
+    mv a1, t2
+.Lrank_next_digit:
+    addi t0, t0, 1
+    li t1, 6
+    bltu t0, t1, .Lrank_permutation_digit
+
+    li a0, 1
+    addi sp, sp, 16
+    ret
+
+.Lparse_failed:
+    li a0, 0
+    li a1, 0
+    li a2, 0
+    addi sp, sp, 16
+    ret
+
+    .size parse_and_rank_target_state, .-parse_and_rank_target_state
+
+/* ===== 5. Solution validation ===== */
     .section .text.validate_solution,"ax",@progbits
     .option norvc
     .type validate_solution_ranks_asm, @function
@@ -265,7 +446,7 @@ validate_solution_ranks_asm:
 
     .size validate_solution_ranks_asm, .-validate_solution_ranks_asm
 
-/* ===== Optional Ripes LED cube renderer ===== */
+/* ===== 6. Optional Ripes LED renderer (RENDER=1) ===== */
     .if RENDER_ENABLED
     .section .text.led_renderer,"ax",@progbits
     .option norvc
@@ -701,7 +882,7 @@ render_delay:
     .byte 5, 0,  9, 17,   4, 0, 13, 17
     .endif
 
-/* ===== IDA* search ===== */
+/* ===== 7. Core IDA* search ===== */
     .section .text.idastar_asm,"ax",@progbits
     .option norvc
     .globl idastar_solve_ranks_asm

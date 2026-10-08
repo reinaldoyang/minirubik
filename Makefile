@@ -54,6 +54,10 @@ RV32I_LED_BASE ?= 0xf0000000
 RV32I_LED_WIDTH ?= 35
 RV32I_LED_HEIGHT ?= 25
 RV32I_LED_DELAY ?= 250000
+RV32I_TARGET_STATE ?= 21345671111111
+RV32I_TARGET_EXPECTED_LENGTH ?= -1
+RV32I_TARGET_FLAGS = -DTARGET_STATE=\"$(RV32I_TARGET_STATE)\" \
+	-DTARGET_EXPECTED_LENGTH=$(RV32I_TARGET_EXPECTED_LENGTH)
 
 solver_iddfs: apps/solver_iddfs.c search/iddfs.c $(SEARCH_COMMON) \
 		cube/cube.h search/search.h search/search_internal.h apps/search_cli.h
@@ -153,7 +157,8 @@ check-rv32i: rv32i
 		echo "RV32I ELF: PASS ($$static_bytes static bytes, no RV32M instruction)"
 
 $(RV32I_ASM_ELF): $(RV32I_ASM_SOURCES) search/idastar_tables.h
-	$(RVCC) $(RV32I_FLAGS) -Icube -Isearch $(RV32I_ASM_SOURCES) \
+	$(RVCC) $(RV32I_FLAGS) $(RV32I_TARGET_FLAGS) -Icube -Isearch \
+		$(RV32I_ASM_SOURCES) \
 		-nostdlib -Wl,--gc-sections -Wl,-e,_start \
 		-Wl,-Map,solver_idastar_asm_rv32i.map -lgcc -o $@
 
@@ -165,7 +170,7 @@ rv32i-asm-info: rv32i-asm
 	$(RVSIZE) -A $(RV32I_ASM_ELF)
 
 $(RV32I_ASM_LED_ELF): $(RV32I_ASM_SOURCES) search/idastar_tables.h
-	$(RVCC) $(RV32I_FLAGS) -DRENDER=1 \
+	$(RVCC) $(RV32I_FLAGS) $(RV32I_TARGET_FLAGS) -DRENDER=1 \
 		-DRENDER_DELAY=$(RV32I_LED_DELAY) -Icube -Isearch \
 		$(RV32I_ASM_SOURCES) -nostdlib -Wl,--gc-sections -Wl,-e,_start \
 		-Wl,--defsym,LED_MATRIX_0_BASE=$(RV32I_LED_BASE) \
@@ -193,21 +198,17 @@ check-rv32i-asm: rv32i-asm
 			{ echo "static data exceeds 128 KiB: $$static_bytes bytes"; exit 1; }; \
 		echo "Hand-written RV32I ELF: PASS ($$static_bytes static bytes, no RV32M instruction)"
 
-solver_idastar_asm_solved.elf: RV32I_CASE_FLAGS := \
-	-DTARGET_PERMUTATION_RANK=0 -DTARGET_ORIENTATION_RANK=0 \
-	-DTARGET_EXPECTED_LENGTH=0
-solver_idastar_asm_short.elf: RV32I_CASE_FLAGS := \
-	-DTARGET_PERMUTATION_RANK=1104 -DTARGET_ORIENTATION_RANK=426 \
-	-DTARGET_EXPECTED_LENGTH=1
-solver_idastar_asm_distance11.elf: RV32I_CASE_FLAGS := \
-	-DTARGET_PERMUTATION_RANK=720 -DTARGET_ORIENTATION_RANK=0 \
-	-DTARGET_EXPECTED_LENGTH=11
-solver_idastar_asm_worst11.elf: RV32I_CASE_FLAGS := \
-	-DTARGET_PERMUTATION_RANK=3343 -DTARGET_ORIENTATION_RANK=0 \
-	-DTARGET_EXPECTED_LENGTH=11
+solver_idastar_asm_solved.elf: RV32I_TARGET_STATE := 12345671111111
+solver_idastar_asm_solved.elf: RV32I_TARGET_EXPECTED_LENGTH := 0
+solver_idastar_asm_short.elf: RV32I_TARGET_STATE := 25314672313211
+solver_idastar_asm_short.elf: RV32I_TARGET_EXPECTED_LENGTH := 1
+solver_idastar_asm_distance11.elf: RV32I_TARGET_STATE := 21345671111111
+solver_idastar_asm_distance11.elf: RV32I_TARGET_EXPECTED_LENGTH := 11
+solver_idastar_asm_worst11.elf: RV32I_TARGET_STATE := 54721631111111
+solver_idastar_asm_worst11.elf: RV32I_TARGET_EXPECTED_LENGTH := 11
 
 $(RV32I_ASM_CASE_ELFS): $(RV32I_ASM_SOURCES) search/idastar_tables.h
-	$(RVCC) $(RV32I_FLAGS) $(RV32I_CASE_FLAGS) -Icube -Isearch \
+	$(RVCC) $(RV32I_FLAGS) $(RV32I_TARGET_FLAGS) -Icube -Isearch \
 		$(RV32I_ASM_SOURCES) -nostdlib -Wl,--gc-sections -Wl,-e,_start \
 		-Wl,-Map,$(@:.elf=.map) -lgcc -o $@
 

@@ -79,17 +79,27 @@ contains the startup, target harness, storage, and search instructions directly.
 The three split assembly files are retained as readable reference copies but
 are not build dependencies. The public search routine accepts permutation and
 orientation ranks, uses an explicit 8-byte-frame stack, and keeps hot counters
-in registers. The default harness passes ranks 720 and 0 for
-`21345671111111`. It links the generated table source only for constant data;
-no compiler-generated C function is present in the assembly ELF. Use
-`make check-rv32i-asm` and `make rv32i-asm-info` for its ISA and size checks.
+in registers. The target harness embeds `21345671111111` by default as a
+NUL-terminated string, validates and ranks it in RV32I assembly, and only then
+calls the rank-based search core. It links the generated table source only for
+constant data; no compiler-generated C function is present in the assembly
+ELF. Use `make check-rv32i-asm` and `make rv32i-asm-info` for its ISA and size
+checks.
+
+An arbitrary state can be selected at assembly time without editing the source:
+
+```sh
+make -B rv32i-asm RV32I_TARGET_STATE=25314672313211
+```
+
+`RV32I_TARGET_EXPECTED_LENGTH` defaults to `-1`, which disables the optional
+test-case length assertion; solution replay to rank `(0, 0)` remains enabled.
 
 `make rv32i-asm-cases` builds four separately named ELFs without editing the
-assembly source: `solver_idastar_asm_solved.elf` uses ranks `(0, 0)`,
-`solver_idastar_asm_short.elf` uses `(1104, 426)`, and
-`solver_idastar_asm_distance11.elf` uses `(720, 0)`. The worst host
-expanded-node distance-11 case is `solver_idastar_asm_worst11.elf`, using ranks
-`(3343, 0)`. Their expected optimal solution lengths are 0, 1, 11, and 11.
+assembly source. They embed `12345671111111`, `25314672313211`,
+`21345671111111`, and the worst host expanded-node distance-11 state
+`54721631111111`. Their expected optimal solution lengths are 0, 1, 11, and
+11.
 
 ## Ripes LED matrix build
 
